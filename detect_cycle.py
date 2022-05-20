@@ -4,13 +4,17 @@ from eva.seal import generate_keys
 from eva.metric import valuation_mse
 import timeit
 import networkx as nx
-from random import random
+import random
+import itertools
 
-# Using networkx, generate a random graph
-# You can change the way you generate the graph
-def generateGraph(n, k, p):
+
+# Generates a random undirecred graph
+# @param(n): node count
+def generateGraph(n):
     #ws = nx.cycle_graph(n)
-    ws = nx.watts_strogatz_graph(n,k,p)
+    # ws = nx.watts_strogatz_graph(n,k,p)
+    random_edge = random.randint(0, n*(n-1))
+    ws = nx.gnm_random_graph(n=n, m=random_edge, directed=False)
     return ws
 
 # If there is an edge between two vertices its weight is 1 otherwise it is zero
@@ -47,21 +51,60 @@ def printGraph(graph,n):
 # Eva will then encrypt them
 def prepareInput(n, m):
     input = {}
-    GG = generateGraph(n,3,0.5)
+    GG = generateGraph(n)
+    truth = ground_truth_cycle(GG)
     graph, graphdict = serializeGraphZeroOne(GG,m)
     input['Graph'] = graph
-    return input
+    return input, truth
 
-# This is the dummy analytic service
-# You will implement this service based on your selected algorithm
-# you can other parameters using global variables !!! do not change the signature of this function 
-def graphanalticprogram(graph):
-    reval = graph<<1 ## Check what kind of operators are there in EVA, this is left shift
-    # Note that you cannot compute everything using EVA/CKKS
-    # For instance, comparison is not possible
-    # You can add, subtract, multiply, negate, shift right/left
-    # You will have to implement an interface with the trusted entity for comparison (send back the encrypted values, push the trusted entity to compare and get the comparison output)
-    return reval
+# creates possible routes for the cycle
+# @param(size): size of the nodes in the graph
+def create_routes(size):
+    all_routes = []
+    for i in range(size):
+      # create an array of possible nodes and remove the current one
+      arr = [i for i in range(size)]
+      arr.remove(i)
+
+      # get permutations per size
+      for j in range(1,size-1):
+        routes = list(itertools.permutations(arr, j+1))
+        # append the starting node to the list
+        for r in routes:
+          r = list(r)
+          r.insert(0,i)
+          r.append(i)
+          all_routes.append(r)
+
+    return all_routes
+
+# generates ground truth for the cycle detection
+# @param(GG): nx graph object
+def ground_truth_cycle(GG):
+  return True if len(list(nx.cycle_basis(GG))) > 0 else False
+
+# checks whether a cycle is present in the graph
+# 1. create all possible routes for a cycle
+# 2. shift the graph so that weight between selected nodes are present
+# 3. multiply weights on the each consequtive nodes in the route
+# 4. add result to accumulated 
+# 5. if accumulated is greater than zero, it means that there is a cycle in the graph
+def graphanalticprogram(graph, n):
+    routes = create_routes(size=n)
+    accumulated = [0]*16384
+    temp = [1]*16384
+
+    for route in routes:
+        for i in range(len(route)-1):
+            from_node = route[i]
+            to_node = route[i+1]
+            # shift the graph object so that weight between two selected nodes is in the first index
+            weight = graph<<((from_node*n + to_node))
+            temp = temp * weight
+            accumulated = accumulated + temp
+        temp = [1]*16384
+
+    return accumulated
     
 # Do not change this 
 # the parameter n can be passed in the call from simulate function
@@ -88,14 +131,16 @@ def simulate(n):
     config['lazy_relinearize'] = 'true'
     config['rescaler'] = 'always'
     config['balance_reductions'] = 'true'
-    inputs = prepareInput(n, m)
+    inputs, truth = prepareInput(n, m)
 
     graphanaltic = EvaProgramDriver("graphanaltic", vec_size=m,n=n)
     with graphanaltic:
         graph = Input('Graph')
-        reval = graphanalticprogram(graph)
-        Output('ReturnedValue', reval)
-    
+        acc = graphanalticprogram(graph,n)
+        # acc[0] has the accumulated val
+        Output('ReturnedValue', acc)
+        Output('Ground Truth', truth)
+
     prog = graphanaltic
     prog.set_output_ranges(30)
     prog.set_input_scales(30)
@@ -135,7 +180,7 @@ def simulate(n):
 
 
 if __name__ == "__main__":
-    simcnt = 3 #The number of simulation runs, set it to 3 during development otherwise you will wait for a long time
+    simcnt = 10 #The number of simulation runs, set it to 3 during development otherwise you will wait for a long time
     # For benchmarking you must set it to a large number, e.g., 100
     #Note that file is opened in append mode, previous results will be kept in the file
     resultfile = open("results.csv", "a")  # Measurement results are collated in this file for you to plot later on
@@ -143,13 +188,13 @@ if __name__ == "__main__":
     resultfile.close()
     
     print("Simulation campaing started:")
-    for nc in range(36,64,4): # Node counts for experimenting various graph sizes
+    for nc in range(4,5,1): # Node counts for experimenting various graph sizes
         n = nc
         resultfile = open("results.csv", "a") 
         for i in range(simcnt):
             #Call the simulator
             compiletime, keygenerationtime, encryptiontime, executiontime, decryptiontime, referenceexecutiontime, mse = simulate(n)
             res = str(n) + "," + str(i) + "," + str(compiletime) + "," + str(keygenerationtime) + "," +  str(encryptiontime) + "," +  str(executiontime) + "," +  str(decryptiontime) + "," +  str(referenceexecutiontime) + "," +  str(mse) + "\n"
-            print(res)
+            # print(res)
             resultfile.write(res)
         resultfile.close()
