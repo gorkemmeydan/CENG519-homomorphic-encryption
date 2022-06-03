@@ -6,7 +6,7 @@ import timeit
 import networkx as nx
 import random
 import itertools
-
+from functools import lru_cache
 
 # Generates a random undirecred graph
 # @param(n): node count
@@ -60,7 +60,6 @@ def prepareInput(n, m):
 # creates possible routes for the cycle
 # @param(size): size of the nodes in the graph
 def create_routes(size):
-    all_routes = []
     for i in range(size):
       # create an array of possible nodes and remove the current one
       arr = [i for i in range(size)]
@@ -91,18 +90,23 @@ def ground_truth_cycle(GG):
 # 5. if accumulated is greater than zero, it means that there is a cycle in the graph
 def graphanalticprogram(graph, n):
     routes = create_routes(size=n)
-    accumulated = [0]*16384
-    temp = [1]*16384
+    accumulated = [0]
+    temp = [1]
+
+    @lru_cache()
+    def getWeight(i,j):
+        return graph<<((i*n + j))
 
     for route in routes:
         for i in range(len(route)-1):
             from_node = route[i]
             to_node = route[i+1]
             # shift the graph object so that weight between two selected nodes is in the first index
-            weight = graph<<((from_node*n + to_node))
+            weight = getWeight(min(from_node,to_node), max(from_node,to_node)) 
+            # graph<<((from_node*n + to_node))
             temp = temp * weight
             accumulated = accumulated + temp
-        temp = [1]*16384
+        temp = [1]
 
     return accumulated
     
@@ -180,7 +184,7 @@ def simulate(n):
 
 
 if __name__ == "__main__":
-    simcnt = 10 #The number of simulation runs, set it to 3 during development otherwise you will wait for a long time
+    simcnt = 50 #The number of simulation runs, set it to 3 during development otherwise you will wait for a long time
     # For benchmarking you must set it to a large number, e.g., 100
     #Note that file is opened in append mode, previous results will be kept in the file
     resultfile = open("results.csv", "a")  # Measurement results are collated in this file for you to plot later on
@@ -192,6 +196,7 @@ if __name__ == "__main__":
         n = nc
         resultfile = open("results.csv", "a") 
         for i in range(simcnt):
+            print("sim set ", i," out of ", simcnt)
             #Call the simulator
             compiletime, keygenerationtime, encryptiontime, executiontime, decryptiontime, referenceexecutiontime, mse = simulate(n)
             res = str(n) + "," + str(i) + "," + str(compiletime) + "," + str(keygenerationtime) + "," +  str(encryptiontime) + "," +  str(executiontime) + "," +  str(decryptiontime) + "," +  str(referenceexecutiontime) + "," +  str(mse) + "\n"
